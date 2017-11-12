@@ -1,5 +1,8 @@
 ﻿using System.Diagnostics;
 using System.Threading;
+using System.Collections;
+using System.Collections.Generic;
+using System;
 using NetMQ;
 using NetMQ.Sockets;
 using UnityEngine;
@@ -25,7 +28,7 @@ public class NetMqPublisher
         AsyncIO.ForceDotNet.Force();
         using (var server = new ResponseSocket())
         {
-            server.Bind("tcp://*:12346");
+            server.Bind("tcp://*:5555");
 
             while (!_listenerCancelled)
             {
@@ -87,14 +90,96 @@ public class ServerObject : MonoBehaviour
         Connected = _netMqPublisher.Connected;
     }
 
-    private string HandleMessage(string message)
+	public IEnumerator ThisWillBeExecutedOnTheMainThread(string message) {
+		UnityEngine.Debug.Log ("This is executed from the main thread");
+		controller.processMessage (message);
+		yield return null;
+	}
+
+	private string HandleMessage(string message)
     {
         // Not on main thread
-		return controller.processMessage (message);;
+
+		UnityEngine.Debug.Log (message);
+
+//		UnityEngine.Debug.Log (1);
+//		UnityMainThreadDispatcher.Instance().Enqueue(ThisWillBeExecutedOnTheMainThread());
+//		UnityEngine.Debug.Log (2);
+//		return "OK";
+
+		return controller.processMessage (message);
     }
 
     private void OnDestroy()
     {
         _netMqPublisher.Stop();
     }
+
+}
+
+public class UnityMainThreadDispatcher : MonoBehaviour {
+
+	private static readonly Queue<Action> _executionQueue = new Queue<Action>();
+
+	public void Update() {
+		lock(_executionQueue) {
+			while (_executionQueue.Count > 0) {
+				_executionQueue.Dequeue().Invoke();
+			}
+		}
+	}
+
+	/// <summary>
+	/// Locks the queue and adds the IEnumerator to the queue
+	/// </summary>
+	/// <param name="action">IEnumerator function that will be executed from the main thread.</param>
+	public void Enqueue(IEnumerator action) {
+		lock (_executionQueue) {
+			_executionQueue.Enqueue (() => {
+				StartCoroutine (action);
+			});
+		}
+	}
+
+	/// <summary>
+	/// Locks the queue and adds the Action to the queue
+	/// </summary>
+	/// <param name="action">function that will be executed from the main thread.</param>
+	public void Enqueue(Action action)
+	{
+		Enqueue(ActionWrapper(action));
+	}
+	IEnumerator ActionWrapper(Action a)
+	{
+		a();
+		yield return null;
+	}
+
+
+	private static UnityMainThreadDispatcher _instance = null;
+
+	public static bool Exists() {
+		return _instance != null;
+	}
+
+	public static UnityMainThreadDispatcher Instance() {
+		if (!Exists ()) {
+			throw new Exception ("UnityMainThreadDispatcher could not find the UnityMainThreadDispatcher object. Please ensure you have added the MainThreadExecutor Prefab to your scene.");
+		}
+		return _instance;
+	}
+
+
+	void Awake() {
+		if (_instance == null) {
+			_instance = this;
+			DontDestroyOnLoad(this.gameObject);
+		}
+	}
+
+	void OnDestroy() {
+		_instance = null;
+	}
+
+
 }
